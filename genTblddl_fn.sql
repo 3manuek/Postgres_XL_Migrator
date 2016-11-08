@@ -12,7 +12,8 @@ BEGIN
             table_name,
             column_name,
             data_type as column_type,
-            character_maximum_length,
+            -- COALESCE(character_maximum_length, 4096) character_maximum_length,
+	    character_maximum_length,
             column_default,
             CASE WHEN is_nullable = 'NO' THEN 
                 'NOT NULL'
@@ -30,7 +31,7 @@ BEGIN
             v_table_ddl:=v_table_ddl||',';
         END IF;
 
-        IF column_record.column_type = 'character varying' THEN
+        IF column_record.column_type = 'character varying' AND column_record.character_maximum_length > 0 THEN
 		column_record.column_type := column_record.column_type||'('||column_record.character_maximum_length||')';
 	END IF;
        

@@ -60,9 +60,9 @@ cr_fn_migration()
 
 	# Create table if not exists. This table is used to store temporary migration data within the function
 	EXISTS_FLAG=$(psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -At -q -c \
-					"SELECT EXISTS(SELECT tablename \
-					 FROM pg_tables where schemaname = '${TEMP_SCHEMA}' \
-					 AND tablename = '${TEMP_TABLE}');")
+					"SELECT EXISTS(SELECT table_name \
+					 FROM information_schema.tables where table_schema = '${TEMP_SCHEMA}' \
+					 AND table_name = '${TEMP_TABLE}');")
 	if [ "${EXISTS_FLAG}" == "f" ]
 	then
 		# Does not exist, create table
@@ -106,8 +106,8 @@ migrate_data()
 	TEMP_SCHEMA=$1
 
 	# Create schema on destination DB if not already exists
-	QUERY="select exists (select distinct(schemaname) from pg_tables \
-				where schemaname = '${MIGRATE_SCHEMA}');"
+	QUERY="select exists (select distinct(schema_name) from information_schema.schemata \
+				where schema_name = '${MIGRATE_SCHEMA}');"
 
 	EXIST_FLAG=$(psql -U ${DEST_USER} -h ${DEST_HOST} ${DEST_DB} -At -q -c "${QUERY}")
 
@@ -167,8 +167,8 @@ migrate_data()
 #####################################################################
 get_work_area()
 {
-	QUERY="select exists (select distinct(schemaname) from pg_tables \
-				where schemaname = 'temp');"
+	QUERY="select exists (select distinct(schema_name) from information_schema.schemata \
+				where schema_name = 'temp');"
 
 	EXISTS=$(psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -At -q -c "${QUERY}")
 
@@ -184,7 +184,7 @@ cleanUp()
 	rm -rf ${DUMP_DIR}
 	psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -At -q -c "DROP TABLE IF EXISTS ${TEMP_SCHEMA}.${TEMP_TABLE} cascade;"
 	psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -At -q -c "DROP FUNCTION IF EXISTS ${TEMP_SCHEMA}.migration_analysis(varchar);"	
-	psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -At -q -c "DROP FUNCTION IF EXISTS ${TEMP_SCHEMA}.genTblddl(varchar,varchar,varchar);"	
+	psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -At -q -c "DROP FUNCTION IF EXISTS ${TEMP_SCHEMA}.genTblddl(varchar,varchar,varchar,varchar);"	
 }
 
 ####################
