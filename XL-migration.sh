@@ -22,6 +22,8 @@
 #######################################################################################################
 #set -x
 
+
+
 ################################################
 #### log():  Write info to log file          ###
 ################################################
@@ -59,7 +61,7 @@ cr_fn_migration()
 	TEMP_SCHEMA=$1
 
 	# Create table if not exists. This table is used to store temporary migration data within the function
-	EXISTS_FLAG=$(psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -At -q -c \
+	EXISTS_FLAG=$(psql ${SRC_CONNSTRING} -At -q -c \
 					"SELECT EXISTS(SELECT table_name \
 					 FROM information_schema.tables where table_schema = '${TEMP_SCHEMA}' \
 					 AND table_name = '${TEMP_TABLE}');")
@@ -67,7 +69,7 @@ cr_fn_migration()
 	then
 		# Does not exist, create table
 		log "===== ${TEMP_SCHEMA}.${TEMP_TABLE} table does not exist, creating it........`date`"
-		psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -At -q -c \
+		psql ${SRC_CONNSTRING} -At -q -c \
 					"CREATE TABLE ${TEMP_SCHEMA}.${TEMP_TABLE}(str_schema varchar(128) \
                                						    ,str_table varchar(128) \
                                						    ,str_column varchar(128) \
@@ -77,24 +79,24 @@ cr_fn_migration()
 	else
 		# Table exists, truncate the data
 		log "===== ${TEMP_SCHEMA}.${TEMP_TABLE} exists, cleaning up old data........`date`"
-		psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -At -q -c "TRUNCATE ${TEMP_SCHEMA}.${TEMP_TABLE};"
+		psql ${SRC_CONNSTRING} -At -q -c "TRUNCATE ${TEMP_SCHEMA}.${TEMP_TABLE};"
 	fi
 
 	# Install migration functions but first drop them if they exist
 	log "===== Installing utility functions........`date`"
-	psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -At -q -c "DROP FUNCTION IF EXISTS ${TEMP_SCHEMA}.migration_analysis(varchar);"	
-	psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -At -q -c "DROP FUNCTION IF EXISTS ${TEMP_SCHEMA}.genTblddl(varchar,varchar,varchar,varchar);"	
+	psql ${SRC_CONNSTRING} -At -q -c "DROP FUNCTION IF EXISTS ${TEMP_SCHEMA}.migration_analysis(varchar);"
+	psql ${SRC_CONNSTRING} -At -q -c "DROP FUNCTION IF EXISTS ${TEMP_SCHEMA}.genTblddl(varchar,varchar,varchar,varchar);"
 
 	# Replacing %SCHEMA% values in both migration_analysis_fn.sql and genTblddl.sql files
 	sed -e "s/%SCHEMA%/${TEMP_SCHEMA}/g" -e "s/%TABLE%/${TEMP_TABLE}/g" migration_analysis_fn.sql > ${DUMP_DIR}/migration_analysis_fn.sql
 	sed -e "s/%SCHEMA%/${TEMP_SCHEMA}/g" genTblddl_fn.sql > ${DUMP_DIR}/genTblddl_fn.sql
 	# Create the functions
-	psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -f ${DUMP_DIR}/migration_analysis_fn.sql
-	psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -f ${DUMP_DIR}/genTblddl_fn.sql
+	psql ${SRC_CONNSTRING} -f ${DUMP_DIR}/migration_analysis_fn.sql
+	psql ${SRC_CONNSTRING} -f ${DUMP_DIR}/genTblddl_fn.sql
 
 	# Generate column distribution information
 	log "===== Generating column distribution data........`date`"
-	psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -At -q -c "SELECT ${TEMP_SCHEMA}.migration_analysis('${MIGRATE_SCHEMA}');"
+	psql ${SRC_CONNSTRING} -At -q -c "SELECT ${TEMP_SCHEMA}.migration_analysis('${MIGRATE_SCHEMA}');"
 
 }
 
@@ -109,14 +111,14 @@ migrate_data()
 	QUERY="select exists (select distinct(schema_name) from information_schema.schemata \
 				where schema_name = '${MIGRATE_SCHEMA}');"
 
-	EXIST_FLAG=$(psql -U ${DEST_USER} -h ${DEST_HOST} ${DEST_DB} -At -q -c "${QUERY}")
+	EXIST_FLAG=$(psql ${DEST_CONNSTRING} -At -q -c "${QUERY}")
 
 	if [ "${EXIST_FLAG}" == "f" ]
 	then
 		log "===== Schema ${MIGRATE_SCHEMA} does not exist, creating it........`date`"
-		psql -U ${DEST_USER} -h ${DEST_HOST} ${DEST_DB} -At -q -c "CREATE SCHEMA ${MIGRATE_SCHEMA} authorization ${SCHEMA_OWNER};"
-		psql -U ${DEST_USER} -h ${DEST_HOST} ${DEST_DB} -At -q -c "GRANT ALL ON SCHEMA ${MIGRATE_SCHEMA} TO ${SCHEMA_OWNER};"
-		psql -U ${DEST_USER} -h ${DEST_HOST} ${DEST_DB} -At -q -c "GRANT USAGE ON SCHEMA ${MIGRATE_SCHEMA} TO ${SCHEMA_OWNER};"
+		psql ${DEST_CONNSTRING} -At -q -c "CREATE SCHEMA ${MIGRATE_SCHEMA} authorization ${SCHEMA_OWNER};"
+		psql ${DEST_CONNSTRING} -At -q -c "GRANT ALL ON SCHEMA ${MIGRATE_SCHEMA} TO ${SCHEMA_OWNER};"
+		psql ${DEST_CONNSTRING} -At -q -c "GRANT USAGE ON SCHEMA ${MIGRATE_SCHEMA} TO ${SCHEMA_OWNER};"
 	fi
 
 	for tblname in ${TABLES}
@@ -127,7 +129,7 @@ migrate_data()
 								    WHERE str_schema = '${MIGRATE_SCHEMA}' \
 								    AND str_table = '${tblname}' \
 								    AND str_candidate = 'Yes';")
-		# Generate CREATE DDL 
+		# Generate CREATE DDL
 		log "===== Generate CREATE DDL script........`date`"
 		if [ "${DIST_TYPE}x" == "x" ]
 		then
@@ -135,29 +137,29 @@ migrate_data()
 			DIST_TYPE="hash"
 		fi
 
-		psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -At -q -c \
+		psql ${SRC_CONNSTRING} -At -q -c \
 				"select ${TEMP_SCHEMA}.genTblddl('${MIGRATE_SCHEMA}','${tblname}','${DIST_COLUMN}','${DIST_TYPE}');" -o ${DUMP_DIR}/${tblname}.sql
 
 		# Create table on XL destination environment
 		log "===== Creating table ${tblname} in ${DEST_DB} database........`date`"
-		psql -U ${DEST_USER} -h ${DEST_HOST} ${DEST_DB} -At -q -c "DROP TABLE IF EXISTS ${MIGRATE_SCHEMA}.${tblname} cascade;"
-		psql -U ${DEST_USER} -h ${DEST_HOST} ${DEST_DB} -At -q -f ${DUMP_DIR}/${tblname}.sql
+		psql ${DEST_CONNSTRING} -At -q -c "DROP TABLE IF EXISTS ${MIGRATE_SCHEMA}.${tblname} cascade;"
+		psql ${DEST_CONNSTRING} -At -q -f ${DUMP_DIR}/${tblname}.sql
 
 		# Grant permissions (assuming read only and update roles already exist)
 		log "===== Granting permissions..............`date`"
-		psql -U ${DEST_USER} -h ${DEST_HOST} ${DEST_DB} -At -q -c "ALTER TABLE ${MIGRATE_SCHEMA}.${tblname} OWNER TO ${SCHEMA_OWNER};"
-		psql -U ${DEST_USER} -h ${DEST_HOST} ${DEST_DB} -At -q -c "GRANT ALL ON TABLE ${MIGRATE_SCHEMA}.${tblname} TO ${SCHEMA_OWNER};"
-		psql -U ${DEST_USER} -h ${DEST_HOST} ${DEST_DB} -At -q -c "GRANT SELECT ON TABLE ${MIGRATE_SCHEMA}.${tblname} TO ${SCHEMA_OWNER}_ro;"
-		psql -U ${DEST_USER} -h ${DEST_HOST} ${DEST_DB} -At -q -c "GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE \
+		psql ${DEST_CONNSTRING} -At -q -c "ALTER TABLE ${MIGRATE_SCHEMA}.${tblname} OWNER TO ${SCHEMA_OWNER};"
+		psql ${DEST_CONNSTRING} -At -q -c "GRANT ALL ON TABLE ${MIGRATE_SCHEMA}.${tblname} TO ${SCHEMA_OWNER};"
+		psql ${DEST_CONNSTRING} -At -q -c "GRANT SELECT ON TABLE ${MIGRATE_SCHEMA}.${tblname} TO ${SCHEMA_OWNER}_ro;"
+		psql ${DEST_CONNSTRING} -At -q -c "GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE \
 										${MIGRATE_SCHEMA}.${tblname} TO ${SCHEMA_OWNER}_update;"
 
 		# Extract data from source
 		log "===== Exporting data from ${SRC_DB}........`date`"
-		pg_dump -a -Fc -O -U ${SRC_USER} -h ${SRC_HOST} -t ${MIGRATE_SCHEMA}.${tblname} -f ${DUMP_DIR}/${tblname}.dmp ${SRC_DB}
+		pg_dump -a -Fc -O -t ${MIGRATE_SCHEMA}.${tblname} -f ${DUMP_DIR}/${tblname}.dmp ${SRC_CONNSTRING}
 
 		# Extract data from source
 		log "===== Restoring data to ${DEST_DB}........`date`"
-		pg_restore -j4 -U ${DEST_USER} -h ${DEST_HOST} -d ${DEST_DB} ${DUMP_DIR}/${tblname}.dmp
+		pg_restore -j4 ${DEST_CONNSTRING} ${DUMP_DIR}/${tblname}.dmp
 	done
 }
 
@@ -170,7 +172,7 @@ get_work_area()
 	QUERY="select exists (select distinct(schema_name) from information_schema.schemata \
 				where schema_name = 'temp');"
 
-	EXISTS=$(psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -At -q -c "${QUERY}")
+	EXISTS=$(psql ${SRC_CONNSTRING} -At -q -c "${QUERY}")
 
 	echo ${EXISTS}
 }
@@ -182,19 +184,23 @@ cleanUp()
 {
 	TEMP_SCHEMA=$1
 	rm -rf ${DUMP_DIR}
-	psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -At -q -c "DROP TABLE IF EXISTS ${TEMP_SCHEMA}.${TEMP_TABLE} cascade;"
-	psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -At -q -c "DROP FUNCTION IF EXISTS ${TEMP_SCHEMA}.migration_analysis(varchar);"	
-	psql -U ${SRC_USER} -h ${SRC_HOST} ${SRC_DB} -At -q -c "DROP FUNCTION IF EXISTS ${TEMP_SCHEMA}.genTblddl(varchar,varchar,varchar,varchar);"	
+	psql ${SRC_CONNSTRING} -At -q -c "DROP TABLE IF EXISTS ${TEMP_SCHEMA}.${TEMP_TABLE} cascade;"
+	psql ${SRC_CONNSTRING} -At -q -c "DROP FUNCTION IF EXISTS ${TEMP_SCHEMA}.migration_analysis(varchar);"
+	psql ${SRC_CONNSTRING} -At -q -c "DROP FUNCTION IF EXISTS ${TEMP_SCHEMA}.genTblddl(varchar,varchar,varchar,varchar);"
 }
 
 ####################
 ### MAIN PROGRAM ###
 ####################
 
+####
+#### Variables
+####
 PROG=`basename $0`
 PROP_FILE=XL-migrate.properties
 
 ARGS=`getopt hc: $*`
+
 
 if [ $? != 0 ] ; then
   Usage
@@ -221,6 +227,10 @@ else
         Usage
         exit 1;
 fi
+
+SRC_CONNSTRING="-U ${SRC_USER} -P ${SRC_{PORT}} -h ${SRC_HOST} ${SRC_DB}"
+DEST_CONNSTRING="-U ${DEST_USER} -P ${DEST_PORT} -h ${DEST_HOST} ${DEST_DB}"
+
 
 log "===== Start Migration process........`date`"
 
